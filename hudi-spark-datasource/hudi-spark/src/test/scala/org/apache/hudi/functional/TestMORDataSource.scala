@@ -29,7 +29,7 @@ import org.apache.hudi.common.table.HoodieTableMetaClient
 import org.apache.hudi.common.table.timeline.HoodieTimeline
 import org.apache.hudi.common.testutils.HoodieTestDataGenerator
 import org.apache.hudi.common.testutils.RawTripTestPayload.{recordToString, recordsToStrings}
-import org.apache.hudi.common.util
+import org.apache.hudi.common.util.{CollectionUtils, Option}
 import org.apache.hudi.config.{HoodieCompactionConfig, HoodieIndexConfig, HoodieWriteConfig}
 import org.apache.hudi.functional.TestCOWDataSource.convertColumnsToNullable
 import org.apache.hudi.hadoop.config.HoodieRealtimeConfig
@@ -90,7 +90,7 @@ class TestMORDataSource extends HoodieSparkClientTestBase with SparkDatasetMixin
     cleanupFileSystem()
   }
 
-  override def getSparkSessionExtensionsInjector: util.Option[Consumer[SparkSessionExtensions]] =
+  override def getSparkSessionExtensionsInjector: Option[Consumer[SparkSessionExtensions]] =
     toJavaOption(
       Some(
         JFunction.toJavaConsumer((receiver: SparkSessionExtensions) => new HoodieSparkSessionExtension().apply(receiver)))
@@ -1295,7 +1295,7 @@ class TestMORDataSource extends HoodieSparkClientTestBase with SparkDatasetMixin
       spark.sparkContext, "", tablePath, tableName,
       mapAsJavaMap(compactionOptions)).asInstanceOf[SparkRDDWriteClient[HoodieRecordPayload[Nothing]]]
 
-    val compactionInstant = client.scheduleCompaction(org.apache.hudi.common.util.Option.empty()).get()
+    val compactionInstant = client.scheduleCompaction(Option.empty()).get()
 
     // NOTE: this executes the compaction to write the compacted base files, and leaves the
     // compaction instant still inflight, emulating a compaction action that is in progress
