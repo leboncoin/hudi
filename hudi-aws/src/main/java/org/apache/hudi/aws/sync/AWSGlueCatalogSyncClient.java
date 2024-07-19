@@ -383,8 +383,14 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
           .tableInput(updatedTableInput)
           .build();
 
-      awsGlue.updateTable(request);
+      try {
+        awsGlue.updateTable(request).get();
       return true;
+      } catch (InterruptedException e) {
+        throw new RuntimeException(e);
+      } catch (ExecutionException e) {
+        throw new RuntimeException(e);
+      }
     }
   }
 
@@ -415,7 +421,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
           .tableInput(updatedTableInput)
           .build();
 
-      awsGlue.updateTable(request);
+      awsGlue.updateTable(request).get();
     } catch (Exception e) {
       throw new HoodieGlueSyncException("Fail to update definition for table " + tableId(databaseName, tableName), e);
     }
@@ -834,7 +840,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
           .tableInput(updatedTableInput)
           .skipArchive(skipTableArchive)
           .build();
-      awsGlue.updateTable(request);
+      awsGlue.updateTable(request).get();
       return true;
     } catch (Exception e) {
       throw new HoodieGlueSyncException("Fail to update params for table " + tableId(databaseName, tableName) + ": " + updatingParams, e);
