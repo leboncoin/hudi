@@ -31,6 +31,8 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class TestParquet2SparkSchemaUtils {
@@ -59,7 +61,7 @@ public class TestParquet2SparkSchemaUtils {
                     + " f11 tinyint, f12 smallint, f13 binary, f14 boolean");
 
     String sparkSchemaJson = Parquet2SparkSchemaUtils.convertToSparkSchemaJson(
-            spark2ParquetConverter.convert(sparkSchema).asGroupType());
+            spark2ParquetConverter.convert(sparkSchema).asGroupType(), Collections.emptyList());
     StructType convertedSparkSchema = (StructType) StructType.fromJson(sparkSchemaJson);
     assertEquals(sparkSchema.json(), convertedSparkSchema.json());
     // Test type with nullable
@@ -67,7 +69,7 @@ public class TestParquet2SparkSchemaUtils {
     StructField field1 = new StructField("f1", StringType$.MODULE$, true, Metadata.empty());
     StructType sparkSchemaWithNullable = new StructType(new StructField[]{field0, field1});
     String sparkSchemaWithNullableJson = Parquet2SparkSchemaUtils.convertToSparkSchemaJson(
-            spark2ParquetConverter.convert(sparkSchemaWithNullable).asGroupType());
+            spark2ParquetConverter.convert(sparkSchemaWithNullable).asGroupType(), Collections.emptyList());
     StructType convertedSparkSchemaWithNullable = (StructType) StructType.fromJson(sparkSchemaWithNullableJson);
     assertEquals(sparkSchemaWithNullable.json(), convertedSparkSchemaWithNullable.json());
   }
@@ -79,7 +81,7 @@ public class TestParquet2SparkSchemaUtils {
                     + ",f3 map<array<date>, bigint>, f4 array<array<double>>"
                     + ",f5 struct<id:int, name:string>");
     String sparkSchemaJson = Parquet2SparkSchemaUtils.convertToSparkSchemaJson(
-            spark2ParquetConverter.convert(sparkSchema).asGroupType());
+            spark2ParquetConverter.convert(sparkSchema).asGroupType(), Collections.emptyList());
     StructType convertedSparkSchema = (StructType) StructType.fromJson(sparkSchemaJson);
     assertEquals(sparkSchema.json(), convertedSparkSchema.json());
     // Test complex type with nullable
@@ -87,7 +89,7 @@ public class TestParquet2SparkSchemaUtils {
     StructField field1 = new StructField("f1", new MapType(StringType$.MODULE$, IntegerType$.MODULE$, true), false, Metadata.empty());
     StructType sparkSchemaWithNullable = new StructType(new StructField[]{field0, field1});
     String sparkSchemaWithNullableJson = Parquet2SparkSchemaUtils.convertToSparkSchemaJson(
-            spark2ParquetConverter.convert(sparkSchemaWithNullable).asGroupType());
+            spark2ParquetConverter.convert(sparkSchemaWithNullable).asGroupType(), Collections.emptyList());
     StructType convertedSparkSchemaWithNullable = (StructType) StructType.fromJson(sparkSchemaWithNullableJson);
     assertEquals(sparkSchemaWithNullable.json(), convertedSparkSchemaWithNullable.json());
   }
