@@ -173,12 +173,9 @@ public class CleanPlanActionExecutor<T, I, K, O> extends BaseActionExecutor<T, I
   protected Option<HoodieCleanerPlan> requestClean(String startCleanTime) {
     final HoodieCleanerPlan cleanerPlan = requestClean(context);
     Option<HoodieCleanerPlan> option = Option.empty();
-    // Create a clean request if:
-    // - ALLOW_EMPTY_CLEAN_COMMITS is true
-    // - or the list of file paths to be deleted is not empty
-    if (config.allowEmptyCleanCommits() || (
-        nonEmpty(cleanerPlan.getFilePathsToBeDeletedPerPartition())
-        && cleanerPlan.getFilePathsToBeDeletedPerPartition().values().stream().mapToInt(List::size).sum() > 0)) {
+    if (nonEmpty(cleanerPlan.getFilePathsToBeDeletedPerPartition())
+        && cleanerPlan.getFilePathsToBeDeletedPerPartition().values().stream().mapToInt(List::size).sum() > 0) {
+      // Only create cleaner plan which does some work
       final HoodieInstant cleanInstant = new HoodieInstant(HoodieInstant.State.REQUESTED, HoodieTimeline.CLEAN_ACTION, startCleanTime);
       // Save to both aux and timeline folder
       try {

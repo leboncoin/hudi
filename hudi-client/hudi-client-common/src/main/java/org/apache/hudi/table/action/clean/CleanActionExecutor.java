@@ -217,45 +217,25 @@ public class CleanActionExecutor<T, I, K, O> extends BaseActionExecutor<T, I, K,
         inflightInstant = cleanInstant;
       }
 
-      boolean needsClean = ((cleanerPlan.getFilePathsToBeDeletedPerPartition() != null)
-          && !cleanerPlan.getFilePathsToBeDeletedPerPartition().isEmpty()
-          && cleanerPlan.getFilePathsToBeDeletedPerPartition().values().stream().mapToInt(List::size).sum() > 0);
-
-      HoodieCleanMetadata metadata;
-      if (needsClean) {
-        List<HoodieCleanStat> cleanStats = clean(context, cleanerPlan);
-        table.getMetaClient().reloadActiveTimeline();
-        metadata = CleanerUtils.convertCleanMetadata(
-            inflightInstant.getTimestamp(),
-            Option.of(timer.endTimer()),
-            cleanStats,
-            cleanerPlan.getExtraMetadata()
-        );
-      } else {
-        if (config.allowEmptyCleanCommits()) {
-          table.getMetaClient().reloadActiveTimeline();
-          metadata = CleanerUtils.convertCleanMetadata(
-              inflightInstant.getTimestamp(),
-              Option.of(timer.endTimer()),
-              new ArrayList<HoodieCleanStat>(),
-              cleanerPlan.getExtraMetadata()
-          );
-        } else {
-          return HoodieCleanMetadata.newBuilder().build();
-        }
+      List<HoodieCleanStat> cleanStats = clean(context, cleanerPlan);
+      if (cleanStats.isEmpty()) {
+        return HoodieCleanMetadata.newBuilder().build();
       }
 
+      table.getMetaClient().reloadActiveTimeline();
+      HoodieCleanMetadata metadata = CleanerUtils.convertCleanMetadata(
+          inflightInstant.getTimestamp(),
+          Option.of(timer.endTimer()),
+          cleanStats,
+          cleanerPlan.getExtraMetadata()
+      );
       if (!skipLocking) {
         this.txnManager.beginTransaction(Option.of(inflightInstant), Option.empty());
       }
       writeTableMetadata(metadata, inflightInstant.getTimestamp());
       table.getActiveTimeline().transitionCleanInflightToComplete(inflightInstant,
           TimelineMetadataUtils.serializeCleanMetadata(metadata));
-      if (needsClean) {
-        LOG.info("Marked clean started on " + inflightInstant.getTimestamp() + " as complete");
-      } else if (config.allowEmptyCleanCommits()) {
-        LOG.info("Marked empty clean started on " + inflightInstant.getTimestamp() + " as complete");
-      }
+      LOG.info("Marked clean started on " + inflightInstant.getTimestamp() + " as complete");
       return metadata;
     } catch (IOException e) {
       throw new HoodieIOException("Failed to clean up after commit", e);
@@ -285,13 +265,6 @@ public class CleanActionExecutor<T, I, K, O> extends BaseActionExecutor<T, I, K,
       for (HoodieInstant hoodieInstant : pendingCleanInstants) {
         if (table.getCleanTimeline().isEmpty(hoodieInstant)) {
           table.getActiveTimeline().deleteEmptyInstantIfExists(hoodieInstant);
-          // if the empty instant is inflight, check if request instant is empty too and delete it
-          if (hoodieInstant.getState() == HoodieInstant.State.INFLIGHT) {
-            HoodieInstant requestInstant = new HoodieInstant(HoodieInstant.State.REQUESTED, hoodieInstant.getAction(), hoodieInstant.getTimestamp());
-            if (table.getCleanTimeline().isEmpty(requestInstant)) {
-              table.getActiveTimeline().deleteEmptyInstantIfExists(requestInstant);
-            }
-          }
         } else {
           LOG.info("Finishing previously unfinished cleaner instant=" + hoodieInstant);
           try {
