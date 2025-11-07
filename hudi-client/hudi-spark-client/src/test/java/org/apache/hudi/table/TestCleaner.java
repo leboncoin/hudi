@@ -1347,4 +1347,202 @@ public class TestCleaner extends HoodieCleanerTestBase {
     return Stream.concat(stream1, stream2);
   }
 
+  /**
+   * Test empty clean commits functionality when ALLOW_EMPTY_CLEAN_COMMITS is enabled.
+   * This verifies that clean commits are created even when there are no files to delete,
+   * which improves incremental cleaning performance.
+   */
+  @Test
+  public void testEmptyCleanCommitsWhenEnabled() throws Exception {
+    HoodieWriteConfig config = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder()
+            .withCleanerPolicy(HoodieCleaningPolicy.KEEP_LATEST_COMMITS)
+            .withEmptyCleanCommits(true) // Enable empty clean commits
+            .retainCommits(10)
+            .build())
+        .build();
+
+    try (SparkRDDWriteClient client = getHoodieWriteClient(config)) {
+      // Create some commits first
+      String commitTime1 = makeNewCommitTime(1, "%09d");
+      String commitTime2 = makeNewCommitTime(2, "%09d");
+      String commitTime3 = makeNewCommitTime(3, "%09d");
+
+      HoodieTestTable testTable = HoodieTestTable.of(metaClient);
+      testTable.addCommit(commitTime1);
+      testTable.addCommit(commitTime2);
+      testTable.addCommit(commitTime3);
+
+      // Initially there should be no clean commits
+      HoodieActiveTimeline timeline = metaClient.reloadActiveTimeline();
+      assertEquals(0, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have no clean commits initially");
+
+      // Run cleaner - since we have plenty of commits to retain, nothing should be cleaned
+      // but an empty clean commit should still be created
+      List<HoodieCleanStat> cleanStats = runCleaner(config);
+      timeline = metaClient.reloadActiveTimeline();
+
+      // Verify empty clean commit was created
+      assertEquals(0, cleanStats.size(), "Should not clean any files");
+      assertEquals(1, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have one clean commit even though no files were cleaned");
+
+      // Verify the clean commit has proper metadata
+      HoodieInstant cleanInstant = timeline.getCleanerTimeline().filterCompletedInstants().lastInstant().get();
+      assertNotNull(cleanInstant, "Clean instant should exist");
+
+      HoodieCleanMetadata cleanMetadata = TimelineMetadataUtils
+          .deserializeHoodieCleanMetadata(timeline.getInstantDetails(cleanInstant).get());
+      assertNotNull(cleanMetadata, "Clean metadata should exist");
+      assertTrue(cleanMetadata.getTotalFilesDeleted() == 0, "No files should have been deleted");
+
+      // Run cleaner again - should create another empty clean commit
+      cleanStats = runCleaner(config);
+      timeline = metaClient.reloadActiveTimeline();
+
+      assertEquals(0, cleanStats.size(), "Should not clean any files");
+      assertEquals(2, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have two clean commits");
+    }
+  }
+
+  /**
+   * Test that empty clean commits are NOT created when ALLOW_EMPTY_CLEAN_COMMITS is disabled (default behavior).
+   */
+  @Test
+  public void testEmptyCleanCommitsWhenDisabled() throws Exception {
+    HoodieWriteConfig config = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder()
+            .withCleanerPolicy(HoodieCleaningPolicy.KEEP_LATEST_COMMITS)
+            .withEmptyCleanCommits(false) // Explicitly disable empty clean commits
+            .retainCommits(10)
+            .build())
+        .build();
+
+    try (SparkRDDWriteClient client = getHoodieWriteClient(config)) {
+      // Create some commits first
+      String commitTime1 = makeNewCommitTime(1, "%09d");
+      String commitTime2 = makeNewCommitTime(2, "%09d");
+      String commitTime3 = makeNewCommitTime(3, "%09d");
+
+      HoodieTestTable testTable = HoodieTestTable.of(metaClient);
+      testTable.addCommit(commitTime1);
+      testTable.addCommit(commitTime2);
+      testTable.addCommit(commitTime3);
+
+      // Run cleaner - since we have plenty of commits to retain, nothing should be cleaned
+      // and NO clean commit should be created
+      List<HoodieCleanStat> cleanStats = runCleaner(config);
+      HoodieActiveTimeline timeline = metaClient.reloadActiveTimeline();
+
+      // Verify no clean commit was created
+      assertEquals(0, cleanStats.size(), "Should not clean any files");
+      assertEquals(0, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have no clean commits when nothing is cleaned and feature is disabled");
+    }
+  }
+
+  /**
+   * Test incremental cleaning behavior with empty clean commits.
+   * This verifies that incremental cleaning works correctly when empty clean commits are enabled.
+   */
+  @Test
+  public void testIncrementalCleaningWithEmptyCleanCommits() throws Exception {
+    HoodieWriteConfig config = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder()
+            .withCleanerPolicy(HoodieCleaningPolicy.KEEP_LATEST_COMMITS)
+            .withEmptyCleanCommits(true) // Enable empty clean commits
+            .withIncrementalCleaningMode(true) // Enable incremental cleaning
+            .retainCommits(3)
+            .build())
+        .build();
+
+    try (SparkRDDWriteClient client = getHoodieWriteClient(config)) {
+      HoodieTestTable testTable = HoodieTestTable.of(metaClient);
+
+      // Create commits that should be retained
+      String commitTime1 = makeNewCommitTime(1, "%09d");
+      String commitTime2 = makeNewCommitTime(2, "%09d");
+      String commitTime3 = makeNewCommitTime(3, "%09d");
+
+      testTable.addCommit(commitTime1);
+      testTable.addCommit(commitTime2);
+      testTable.addCommit(commitTime3);
+
+      // Run cleaner - should create empty clean commit
+      List<HoodieCleanStat> cleanStats = runCleaner(config);
+      HoodieActiveTimeline timeline = metaClient.reloadActiveTimeline();
+
+      assertEquals(0, cleanStats.size(), "Should not clean any files initially");
+      assertEquals(1, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have one empty clean commit");
+
+      // Add more commits - some old enough to be cleaned
+      String commitTime4 = makeNewCommitTime(4, "%09d");
+      String commitTime5 = makeNewCommitTime(5, "%09d");
+      String commitTime6 = makeNewCommitTime(6, "%09d");
+
+      testTable.addCommit(commitTime4);
+      testTable.addCommit(commitTime5);
+      testTable.addCommit(commitTime6);
+
+      // Create actual files for the old commits that should be cleaned
+      testTable.withPartitionMetaFiles("2021/01/01")
+          .addCommit(commitTime1)
+          .withBaseFilesInPartition("2021/01/01", "file1");
+
+      // Run cleaner again - should clean old files AND create clean commit
+      cleanStats = runCleaner(config);
+      timeline = metaClient.reloadActiveTimeline();
+
+      assertTrue(cleanStats.size() > 0, "Should clean some files now");
+      assertEquals(2, timeline.getCleanerTimeline().filterCompletedInstants().countInstants(),
+          "Should have two clean commits");
+
+      // Verify clean metadata contains earliest commit info for incremental cleaning
+      HoodieInstant lastCleanInstant = timeline.getCleanerTimeline().filterCompletedInstants().lastInstant().get();
+      HoodieCleanMetadata cleanMetadata = TimelineMetadataUtils
+          .deserializeHoodieCleanMetadata(timeline.getInstantDetails(lastCleanInstant).get());
+
+      assertNotNull(cleanMetadata.getEarliestCommitToRetain(),
+          "Clean metadata should contain earliest commit to retain for incremental cleaning");
+    }
+  }
+
+  /**
+   * Test empty clean commits configuration.
+   * This verifies that the configuration is properly set and accessible.
+   */
+  @Test
+  public void testEmptyCleanCommitsConfiguration() {
+    // Test that the configuration is properly set when enabled
+    HoodieWriteConfig configEnabled = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder()
+            .withEmptyCleanCommits(true)
+            .build())
+        .build();
+
+    assertTrue(configEnabled.allowEmptyCleanCommits(),
+        "Configuration should return true when empty clean commits are enabled");
+
+    // Test that the configuration defaults to false
+    HoodieWriteConfig configDefault = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder().build())
+        .build();
+
+    assertFalse(configDefault.allowEmptyCleanCommits(),
+        "Configuration should default to false for empty clean commits");
+
+    // Test that the configuration is properly set when explicitly disabled
+    HoodieWriteConfig configDisabled = getConfigBuilder()
+        .withCleanConfig(HoodieCleanConfig.newBuilder()
+            .withEmptyCleanCommits(false)
+            .build())
+        .build();
+
+    assertFalse(configDisabled.allowEmptyCleanCommits(),
+        "Configuration should return false when empty clean commits are explicitly disabled");
+  }
+
 }

@@ -96,6 +96,7 @@ public class CleanerUtils {
         lastCompletedCommitTimestamp, partitionMetadataMap, CLEAN_METADATA_VERSION_2, partitionBootstrapMetadataMap, extraMetadatafromCleanPlan);
   }
 
+
   /**
    * Get Latest Version of Hoodie Cleaner Metadata - Output of cleaner operation.
    * @param metaClient Hoodie Table Meta Client

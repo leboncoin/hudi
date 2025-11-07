@@ -1579,6 +1579,10 @@ public class HoodieWriteConfig extends HoodieConfig {
     return getBoolean(HoodieCleanConfig.CLEANER_INCREMENTAL_MODE_ENABLE);
   }
 
+  public boolean allowEmptyCleanCommits() {
+    return getBoolean(HoodieCleanConfig.ALLOW_EMPTY_CLEAN_COMMITS);
+  }
+
   public boolean inlineCompactionEnabled() {
     return getBoolean(HoodieCompactionConfig.INLINE_COMPACT);
   }
