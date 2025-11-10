@@ -194,13 +194,26 @@ public class Parquet2SparkSchemaUtils {
         }
       case MAP:
       case MAP_KEY_VALUE:
-        GroupType keyValueType = field.getType(0).asGroupType();
-        Type keyType = keyValueType.getType(0);
-        Type valueType = keyValueType.getType(1);
-        boolean valueOptional = valueType.isRepetition(OPTIONAL);
-        return "{\"type\":\"map\", \"keyType\":" + convertFieldType(keyType)
-                + ",\"valueType\":" + convertFieldType(valueType)
-                + ",\"valueContainsNull\":" + valueOptional + "}";
+        // Safety check: handle different MAP encoding formats
+        Type firstChild = field.getType(0);
+        if (firstChild instanceof PrimitiveType) {
+          // Legacy 2-level MAP format: MAP -> key (primitive), value
+          Type keyType = field.getType(0);
+          Type valueType = field.getType(1);
+          boolean valueOptional = valueType.isRepetition(OPTIONAL);
+          return "{\"type\":\"map\", \"keyType\":" + convertFieldType(keyType)
+                  + ",\"valueType\":" + convertFieldType(valueType)
+                  + ",\"valueContainsNull\":" + valueOptional + "}";
+        } else {
+          // Modern 3-level MAP format: MAP -> key_value (group) -> key, value
+          GroupType keyValueType = firstChild.asGroupType();
+          Type keyType = keyValueType.getType(0);
+          Type valueType = keyValueType.getType(1);
+          boolean valueOptional = valueType.isRepetition(OPTIONAL);
+          return "{\"type\":\"map\", \"keyType\":" + convertFieldType(keyType)
+                  + ",\"valueType\":" + convertFieldType(valueType)
+                  + ",\"valueContainsNull\":" + valueOptional + "}";
+        }
       default:
         throw new UnsupportedOperationException("Unsupport convert " + field + " to spark sql type");
     }
@@ -211,8 +224,10 @@ public class Parquet2SparkSchemaUtils {
   }
 
   private static boolean isElementType(Type repeatedType, String parentName) {
-    return repeatedType.isPrimitive() || repeatedType.asGroupType().getFieldCount() > 1
-      || repeatedType.getName().equals("array") || repeatedType.getName().equals(parentName + "_tuple");
+    return repeatedType.isPrimitive()
+      || (repeatedType instanceof GroupType && repeatedType.asGroupType().getFieldCount() > 1)
+      || repeatedType.getName().equals("array")
+      || repeatedType.getName().equals(parentName + "_tuple");
   }
 
   /**
