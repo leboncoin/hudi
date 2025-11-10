@@ -278,8 +278,8 @@ public class Parquet2SparkSchemaUtils {
    * Enhanced arrayType method with Avro schema support.
    */
   private static String arrayType(Type field, boolean nullable, Schema avroSchema) {
-    // Fallback to original method if no Avro schema
-    if (avroSchema == null) {
+    // Fallback to original method if no Avro schema or if field is not a GroupType
+    if (avroSchema == null || field instanceof PrimitiveType) {
       return arrayType(field, nullable);
     }
 
