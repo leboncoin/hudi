@@ -59,7 +59,7 @@ public class Parquet2SparkSchemaUtils {
           return "{\"name\":\"" + field.getName() + "\",\"type\":" + convertFieldType(field, avroSchema)
                   + ",\"nullable\":false,\"metadata\":{" + getNestedComment(field.getName(), avroSchema) + "}}";
         case REPEATED:
-          String arrayType = arrayType(field, false, avroSchema);
+          String arrayType = arrayType(field, false);
           return "{\"name\":\"" + field.getName() + "\",\"type\":" + arrayType
                   + ",\"nullable\":false,\"metadata\":{" + getNestedComment(field.getName(), avroSchema) + "}}";
         default:
@@ -184,6 +184,10 @@ public class Parquet2SparkSchemaUtils {
         if (isElementType(repeatedType, field.getName())) {
           return arrayType(repeatedType, false);
         } else {
+          // Safety check: handle primitive repeated types that aren't GroupTypes
+          if (repeatedType instanceof PrimitiveType) {
+            return arrayType(repeatedType, false);
+          }
           Type elementType = repeatedType.asGroupType().getType(0);
           boolean optional = elementType.isRepetition(OPTIONAL);
           return arrayType(elementType, optional);
@@ -264,7 +268,7 @@ public class Parquet2SparkSchemaUtils {
           return "{\"name\":\"" + subField.getName() + "\",\"type\":" + convertFieldType(subField, nestedAvroSchema)
               + ",\"nullable\":false,\"metadata\":{" + getNestedComment(subField.getName(), nestedAvroSchema) + "}}";
         case REPEATED:
-          String arrayType = arrayType(subField, false, nestedAvroSchema);
+          String arrayType = arrayType(subField, false);
           return "{\"name\":\"" + subField.getName() + "\",\"type\":" + arrayType
               + ",\"nullable\":false,\"metadata\":{" + getNestedComment(subField.getName(), nestedAvroSchema) + "}}";
         default:
@@ -274,31 +278,6 @@ public class Parquet2SparkSchemaUtils {
     return "{\"type\":\"struct\",\"fields\":[" + fieldsJsonString + "]}";
   }
 
-  /**
-   * Enhanced arrayType method with Avro schema support.
-   */
-  private static String arrayType(Type field, boolean nullable, Schema avroSchema) {
-    // Fallback to original method if no Avro schema
-    if (avroSchema == null) {
-      return arrayType(field, nullable);
-    }
-
-    GroupType groupType = field.asGroupType();
-    Type elementType = groupType.getType(0);
-
-    // Find corresponding Avro array type
-    Schema.Field avroField = findAvroField(field.getName(), avroSchema);
-    Schema arrayItemSchema = null;
-    if (avroField != null) {
-      Schema fieldSchema = getNonNullSchema(avroField.schema());
-      if (fieldSchema.getType() == Schema.Type.ARRAY) {
-        arrayItemSchema = fieldSchema.getElementType();
-      }
-    }
-
-    boolean elementNullable = elementType.getRepetition() != Type.Repetition.REQUIRED;
-    return "{\"type\":\"array\",\"elementType\":" + convertFieldType(elementType, arrayItemSchema) + ",\"containsNull\":" + elementNullable + "}";
-  }
 
   /**
    * Find an Avro field by name in the schema.

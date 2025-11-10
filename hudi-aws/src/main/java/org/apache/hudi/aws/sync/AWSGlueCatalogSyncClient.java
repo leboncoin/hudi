@@ -419,11 +419,13 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
     }
   }
 
-  private void setComments(List<Column> columns, Map<String, Option<String>> commentsMap) {
-    columns.forEach(column -> {
+  private List<Column> setComments(List<Column> columns, Map<String, Option<String>> commentsMap) {
+    // AWS SDK v2 returns immutable lists, so we need to create a new list
+    return columns.stream().map(column -> {
       String comment = commentsMap.getOrDefault(column.name(), Option.empty()).orElse(null);
-      Column.builder().comment(comment).build();
-    });
+      // AWS SDK v2 uses immutable objects, so we need to create a new Column with the comment
+      return column.toBuilder().comment(comment).build();
+    }).collect(Collectors.toList());
   }
 
   private String getTableDoc() {
@@ -453,12 +455,11 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
     Map<String, Option<String>> commentsMap = fromStorage.stream().collect(Collectors.toMap(FieldSchema::getName, FieldSchema::getComment));
 
-    StorageDescriptor storageDescriptor = table.storageDescriptor();
-    List<Column> columns = storageDescriptor.columns();
-    setComments(columns, commentsMap);
+    StorageDescriptor originalStorageDescriptor = table.storageDescriptor();
+    List<Column> columns = setComments(originalStorageDescriptor.columns(), commentsMap);
+    StorageDescriptor storageDescriptor = originalStorageDescriptor.toBuilder().columns(columns).build();
 
-    List<Column> partitionKeys = table.partitionKeys();
-    setComments(partitionKeys, commentsMap);
+    List<Column> partitionKeys = setComments(table.partitionKeys(), commentsMap);
 
     String tableDescription = getTableDoc();
 
@@ -486,7 +487,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
       try {
         awsGlue.updateTable(request).get();
-      return true;
+        return true;
       } catch (InterruptedException e) {
         throw new RuntimeException(e);
       } catch (ExecutionException e) {
