@@ -52,6 +52,7 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Collectors;
 
@@ -186,7 +187,7 @@ public class TableOptionProperties {
         partitionKeys,
         sparkVersion,
         4000,
-        messageType);
+        schema);
     properties.putAll(sparkTableProperties);
     return properties.entrySet().stream()
         .filter(e -> KEY_MAPPING.containsKey(e.getKey()) && !catalogTable.getOptions().containsKey(KEY_MAPPING.get(e.getKey())))
