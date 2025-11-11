@@ -31,6 +31,9 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 
+import org.apache.avro.Schema;
+import org.apache.parquet.avro.AvroSchemaConverter;
+
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -242,5 +245,97 @@ public class TestParquet2SparkSchemaUtils {
     // The ultimate test: verify exact schema preservation for the most complex case
     assertEquals(sparkSchema.json(), convertedSparkSchema.json(),
         "Complex nested structure schema should be perfectly preserved through conversion");
+  }
+
+  @Test
+  public void testUserActualSchemaWithAvroComments() {
+    // Test with the user's actual Avro schema including comments
+    String avroSchemaJson = "{\n" +
+            "  \"type\": \"record\",\n" +
+            "  \"name\": \"search_ad_finder_public_record\",\n" +
+            "  \"namespace\": \"hoodie.search_ad_finder_public\",\n" +
+            "  \"fields\": [\n" +
+            "    {\n" +
+            "      \"name\": \"cities\",\n" +
+            "      \"type\": [\"null\", {\"type\": \"array\", \"items\": [\"null\", \"string\"]}],\n" +
+            "      \"doc\": \"cities set by the searcher\",\n" +
+            "      \"default\": null\n" +
+            "    },\n" +
+            "    {\n" +
+            "      \"name\": \"enums\",\n" +
+            "      \"type\": [\"null\", {\"type\": \"map\", \"values\": [\"null\", {\"type\": \"array\", \"items\": [\"null\", \"string\"]}]}],\n" +
+            "      \"doc\": \"enums filters of the search\",\n" +
+            "      \"default\": null\n" +
+            "    },\n" +
+            "    {\n" +
+            "      \"name\": \"ranges\",\n" +
+            "      \"type\": [\"null\", {\"type\": \"map\", \"values\": [\"null\", {\"type\": \"map\", \"values\": [\"null\", \"int\"]}]}],\n" +
+            "      \"doc\": \"ranges filters of the search\",\n" +
+            "      \"default\": null\n" +
+            "    },\n" +
+            "    {\n" +
+            "      \"name\": \"locations\",\n" +
+            "      \"type\": [\"null\", {\n" +
+            "        \"type\": \"array\",\n" +
+            "        \"items\": [\"null\", {\n" +
+            "          \"type\": \"record\",\n" +
+            "          \"name\": \"locations\",\n" +
+            "          \"namespace\": \"hoodie.search_ad_finder_public.search_ad_finder_public_record\",\n" +
+            "          \"fields\": [\n" +
+            "            {\"name\": \"locationType\", \"type\": [\"null\", \"string\"], \"default\": null},\n" +
+            "            {\"name\": \"label\", \"type\": [\"null\", \"string\"], \"default\": null},\n" +
+            "            {\"name\": \"city\", \"type\": [\"null\", \"string\"], \"default\": null},\n" +
+            "            {\"name\": \"zipcode\", \"type\": [\"null\", \"string\"], \"default\": null},\n" +
+            "            {\"name\": \"department_id\", \"type\": [\"null\", \"string\"], \"default\": null},\n" +
+            "            {\"name\": \"region_id\", \"type\": [\"null\", \"string\"], \"doc\": \"LBC style region id\", \"default\": null},\n" +
+            "            {\"name\": \"latitude\", \"type\": [\"null\", \"float\"], \"default\": null},\n" +
+            "            {\"name\": \"longitude\", \"type\": [\"null\", \"float\"], \"default\": null},\n" +
+            "            {\"name\": \"radius\", \"type\": [\"null\", \"long\"], \"doc\": \"selected radius by user in meters\", \"default\": null},\n" +
+            "            {\"name\": \"default_radius\", \"type\": [\"null\", \"long\"], \"doc\": \"default radius of a city add to the radius in meters\", \"default\": null}\n" +
+            "          ]\n" +
+            "        }]\n" +
+            "      }],\n" +
+            "      \"doc\": \"list of locations\",\n" +
+            "      \"default\": null\n" +
+            "    }\n" +
+            "  ]\n" +
+            "}";
+
+    // Parse the Avro schema
+    Schema avroSchema = new Schema.Parser().parse(avroSchemaJson);
+
+    // Convert Avro to Parquet schema
+    AvroSchemaConverter avroToParquetConverter = new AvroSchemaConverter();
+    org.apache.parquet.schema.MessageType parquetSchema = avroToParquetConverter.convert(avroSchema);
+
+    System.out.println("=== PARQUET SCHEMA ===");
+    System.out.println(parquetSchema);
+
+    // Convert Parquet to Spark with Avro schema for comments
+    String sparkSchemaJson = Parquet2SparkSchemaUtils.convertToSparkSchemaJson(parquetSchema, Collections.singletonList(avroSchema));
+
+    System.out.println("\n=== CONVERTED SPARK SCHEMA ===");
+    System.out.println(sparkSchemaJson);
+
+    // Parse to check if it's valid
+    StructType convertedSparkSchema = (StructType) StructType.fromJson(sparkSchemaJson);
+
+    // Check if comments are preserved
+    assertTrue(sparkSchemaJson.contains("cities set by the searcher"), "cities comment should be preserved");
+    assertTrue(sparkSchemaJson.contains("enums filters of the search"), "enums comment should be preserved");
+    assertTrue(sparkSchemaJson.contains("list of locations"), "locations comment should be preserved");
+
+    // Check if types are correctly converted (not wrapped in structs)
+    assertTrue(sparkSchemaJson.contains("\"type\":\"array\""), "Should have proper array types");
+    assertTrue(sparkSchemaJson.contains("\"type\":\"map\""), "Should have proper map types");
+
+    // Print field types for debugging
+    System.out.println("\n=== FIELD TYPE ANALYSIS ===");
+    for (StructField field : convertedSparkSchema.fields()) {
+      System.out.println(field.name() + ": " + field.dataType().typeName() + " (nullable: " + field.nullable() + ")");
+      if (field.metadata().contains("comment")) {
+        System.out.println("  -> Comment: " + field.metadata().getString("comment"));
+      }
+    }
   }
 }

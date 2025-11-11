@@ -175,6 +175,42 @@ public class Parquet2SparkSchemaUtils {
 
   private static String convertGroupField(GroupType field) {
     if (field.getOriginalType() == null) {
+      // Handle Hudi's specific 3-level LIST/MAP patterns when OriginalType is missing
+      if (field.getFieldCount() == 1) {
+        Type child = field.getType(0);
+        String childName = child.getName();
+
+        // Hudi LIST pattern: wrapper -> "array" (repeated) -> elements
+        if (childName.equals("array") && child.isRepetition(Type.Repetition.REPEATED)) {
+          if (isElementType(child, field.getName())) {
+            return arrayType(child, false);
+          } else {
+            // Safety check for primitive types
+            if (child instanceof PrimitiveType) {
+              return arrayType(child, false);
+            }
+            Type elementType = child.asGroupType().getType(0);
+            boolean optional = elementType.isRepetition(Type.Repetition.OPTIONAL);
+            return arrayType(elementType, optional);
+          }
+        }
+
+        // Hudi MAP pattern: wrapper -> "key_value" (repeated group) -> key, value
+        if (childName.equals("key_value") && child.isRepetition(Type.Repetition.REPEATED)
+            && child instanceof GroupType) {
+          GroupType keyValueType = child.asGroupType();
+          if (keyValueType.getFieldCount() == 2) {
+            Type keyType = keyValueType.getType(0);
+            Type valueType = keyValueType.getType(1);
+            boolean valueOptional = valueType.isRepetition(Type.Repetition.OPTIONAL);
+            return "{\"type\":\"map\", \"keyType\":" + convertFieldType(keyType)
+                    + ",\"valueType\":" + convertFieldType(valueType)
+                    + ",\"valueContainsNull\":" + valueOptional + "}";
+          }
+        }
+      }
+
+      // If it doesn't match LIST/MAP patterns, treat as regular struct
       return convertToSparkSchemaJson(field, Arrays.asList());
     }
     switch (field.getOriginalType()) {
