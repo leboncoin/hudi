@@ -265,6 +265,20 @@ public class TimelineUtils {
     }
   }
 
+  public static boolean isUpsertCommit(HoodieTableMetaClient metaClient, HoodieInstant instant) {
+    try {
+      if (COMMIT_ACTION.equals(instant.getAction()) && !metaClient.getCommitsTimeline().getInstantDetails(instant).isEmpty()) {
+      HoodieCommitMetadata commitMetadata = HoodieCommitMetadata.fromBytes(
+          metaClient.getCommitsTimeline().getInstantDetails(instant).get(), HoodieCommitMetadata.class);
+        return WriteOperationType.UPSERT.equals(commitMetadata.getOperationType());
+      }
+
+      return false;
+    } catch (IOException e) {
+      throw new HoodieIOException("Unable to read instant information: " + instant + " for " + metaClient.getBasePathV2().toString(), e);
+    }
+  }
+
   public static HoodieDefaultTimeline getTimeline(HoodieTableMetaClient metaClient, boolean includeArchivedTimeline) {
     HoodieActiveTimeline activeTimeline = metaClient.getActiveTimeline();
     if (includeArchivedTimeline) {
