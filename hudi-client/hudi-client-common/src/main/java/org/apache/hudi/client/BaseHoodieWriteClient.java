@@ -221,6 +221,14 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     if (!config.allowEmptyCommit() && stats.isEmpty()) {
       return true;
     }
+    // callback if needed, before commit
+    if (config.writeCommitCallbackOn()) {
+      if (null == commitCallback) {
+        commitCallback = HoodieCommitCallbackFactory.create(config);
+      }
+      commitCallback.call(new HoodieWriteCommitCallbackMessage(
+          instantTime, config.getTableName(), config.getBasePath(), stats, Option.of(commitActionType), extraMetadata));
+    }
     LOG.info("Committing " + instantTime + " action " + commitActionType);
     // Create a Hoodie table which encapsulated the commits and files visible
     HoodieTable table = createTable(config, hadoopConf);
@@ -262,15 +270,6 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
     }
 
     emitCommitMetrics(instantTime, metadata, commitActionType);
-
-    // callback if needed.
-    if (config.writeCommitCallbackOn()) {
-      if (null == commitCallback) {
-        commitCallback = HoodieCommitCallbackFactory.create(config);
-      }
-      commitCallback.call(new HoodieWriteCommitCallbackMessage(
-          instantTime, config.getTableName(), config.getBasePath(), stats, Option.of(commitActionType), extraMetadata));
-    }
     return true;
   }
 
