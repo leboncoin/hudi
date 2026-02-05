@@ -118,6 +118,8 @@ import static org.apache.hudi.sync.common.util.TableUtils.tableId;
  * @Experimental
  */
 public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
+  private static final int GLUE_COLUMN_COMMENT_MAX_LEN = 255;
+  private static final int GLUE_TABLE_DESC_MAX_LEN = 2048;
 
   private static final Logger LOG = LoggerFactory.getLogger(AWSGlueCatalogSyncClient.class);
   private static final int MAX_PARTITIONS_PER_CHANGE_REQUEST = 100;
@@ -419,12 +421,29 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
     }
   }
 
+  private static final String TRUNCATED_SUFFIX = " [truncated]";
+
+  private String truncate(String value, int maxLen, String what) {
+    if (value == null) {
+      return null;
+    }
+    if (value.length() <= maxLen) {
+      return value;
+    }
+    LOG.warn("Truncating {} from {} to {} characters for Glue limits", what, value.length(), maxLen);
+    int maxPrefixLen = Math.max(0, maxLen - TRUNCATED_SUFFIX.length());
+    return value.substring(0, maxPrefixLen) + TRUNCATED_SUFFIX;
+  }
+
   private List<Column> setComments(List<Column> columns, Map<String, Option<String>> commentsMap) {
     // AWS SDK v2 returns immutable lists, so we need to create a new list
     return columns.stream().map(column -> {
       String comment = commentsMap.getOrDefault(column.name(), Option.empty()).orElse(null);
       // AWS SDK v2 uses immutable objects, so we need to create a new Column with the comment
-      return column.toBuilder().comment(comment).build();
+      return column
+          .toBuilder()
+          .comment(truncate(comment, GLUE_COLUMN_COMMENT_MAX_LEN, "column comment"))
+          .build();
     }).collect(Collectors.toList());
   }
 
@@ -461,7 +480,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
     List<Column> partitionKeys = setComments(table.partitionKeys(), commentsMap);
 
-    String tableDescription = getTableDoc();
+    String tableDescription = truncate(getTableDoc(), GLUE_TABLE_DESC_MAX_LEN, "table description");
 
     if (getTable(awsGlue, databaseName, tableName).storageDescriptor().equals(storageDescriptor)
         && getTable(awsGlue, databaseName, tableName).partitionKeys().equals(partitionKeys)) {
