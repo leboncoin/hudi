@@ -90,6 +90,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.apache.hudi.aws.utils.S3Utils.s3aToS3;
@@ -120,6 +121,8 @@ import static org.apache.hudi.sync.common.util.TableUtils.tableId;
 public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
   private static final int GLUE_COLUMN_COMMENT_MAX_LEN = 255;
   private static final int GLUE_TABLE_DESC_MAX_LEN = 2048;
+  private static final Pattern GLUE_ALLOWED_CHARS_PATTERN =
+      Pattern.compile("^[\\u0020-\\uD7FF\\uE000-\\uFFFD\\x{10000}-\\x{10FFFF}\\t]*$");
 
   private static final Logger LOG = LoggerFactory.getLogger(AWSGlueCatalogSyncClient.class);
   private static final int MAX_PARTITIONS_PER_CHANGE_REQUEST = 100;
@@ -423,6 +426,34 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
   private static final String TRUNCATED_SUFFIX = " [truncated]";
 
+  static boolean isValidGlueString(String value) {
+    return value == null || GLUE_ALLOWED_CHARS_PATTERN.matcher(value).matches();
+  }
+
+  private static boolean isGlueAllowedCodePoint(int codePoint) {
+    return codePoint == '\t'
+        || (codePoint >= 0x20 && codePoint <= 0xD7FF)
+        || (codePoint >= 0xE000 && codePoint <= 0xFFFD)
+        || (codePoint >= 0x10000 && codePoint <= 0x10FFFF);
+  }
+
+  static String sanitizeForGlue(String value) {
+    if (value == null || isValidGlueString(value)) {
+      return value;
+    }
+    StringBuilder sanitized = new StringBuilder(value.length());
+    for (int i = 0; i < value.length();) {
+      int codePoint = value.codePointAt(i);
+      if (isGlueAllowedCodePoint(codePoint)) {
+        sanitized.appendCodePoint(codePoint);
+      } else if (Character.isWhitespace(codePoint)) {
+        sanitized.append(' ');
+      }
+      i += Character.charCount(codePoint);
+    }
+    return sanitized.toString();
+  }
+
   private String truncate(String value, int maxLen, String what) {
     if (value == null) {
       return null;
@@ -438,7 +469,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
   private List<Column> setComments(List<Column> columns, Map<String, Option<String>> commentsMap) {
     // AWS SDK v2 returns immutable lists, so we need to create a new list
     return columns.stream().map(column -> {
-      String comment = commentsMap.getOrDefault(column.name(), Option.empty()).orElse(null);
+      String comment = sanitizeForGlue(commentsMap.getOrDefault(column.name(), Option.empty()).orElse(null));
       // AWS SDK v2 uses immutable objects, so we need to create a new Column with the comment
       return column
           .toBuilder()
@@ -480,7 +511,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
     List<Column> partitionKeys = setComments(table.partitionKeys(), commentsMap);
 
-    String tableDescription = truncate(getTableDoc(), GLUE_TABLE_DESC_MAX_LEN, "table description");
+    String tableDescription = truncate(sanitizeForGlue(getTableDoc()), GLUE_TABLE_DESC_MAX_LEN, "table description");
 
     if (getTable(awsGlue, databaseName, tableName).storageDescriptor().equals(storageDescriptor)
         && getTable(awsGlue, databaseName, tableName).partitionKeys().equals(partitionKeys)) {
