@@ -179,7 +179,7 @@ public class AvroToSparkJson {
 
     @Override
     public String toJson() {
-      return "\"" + typeName + "\"";
+      return "\"" + escapeJsonString(typeName) + "\"";
     }
   }
 
@@ -280,17 +280,53 @@ public class AvroToSparkJson {
     public String toJson() {
       StringBuilder metadata = new StringBuilder("{");
       if (comment != null && !comment.trim().isEmpty()) {
-        // Escape quotes in comments
-        String escapedComment = comment.replace("\"", "\\\"");
+        String escapedComment = escapeJsonString(comment);
         metadata.append("\"comment\":\"").append(escapedComment).append("\"");
       }
       metadata.append("}");
 
-      return "{\"name\":\"" + name + "\""
+      return "{\"name\":\"" + escapeJsonString(name) + "\""
              + ",\"type\":" + dataType.toJson()
              + ",\"nullable\":" + nullable
              + ",\"metadata\":" + metadata.toString() + "}";
     }
+  }
+
+  private static String escapeJsonString(String value) {
+    StringBuilder escaped = new StringBuilder(value.length());
+    for (int i = 0; i < value.length(); i++) {
+      char c = value.charAt(i);
+      switch (c) {
+        case '"':
+          escaped.append("\\\"");
+          break;
+        case '\\':
+          escaped.append("\\\\");
+          break;
+        case '\b':
+          escaped.append("\\b");
+          break;
+        case '\f':
+          escaped.append("\\f");
+          break;
+        case '\n':
+          escaped.append("\\n");
+          break;
+        case '\r':
+          escaped.append("\\r");
+          break;
+        case '\t':
+          escaped.append("\\t");
+          break;
+        default:
+          if (c < 0x20) {
+            escaped.append(String.format("\\u%04x", (int) c));
+          } else {
+            escaped.append(c);
+          }
+      }
+    }
+    return escaped.toString();
   }
 
   /**

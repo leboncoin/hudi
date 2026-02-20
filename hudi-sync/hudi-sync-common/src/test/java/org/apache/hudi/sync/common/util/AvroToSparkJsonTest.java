@@ -18,12 +18,14 @@
 
 package org.apache.hudi.sync.common.util;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.avro.Schema;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class AvroToSparkJsonTest {
@@ -359,5 +361,23 @@ public class AvroToSparkJsonTest {
     assertTrue(reorderedSchemaJson.contains("\"comment\":\"Partition column\""));
     assertTrue(reorderedSchemaJson.contains("\"comment\":\"Person's name\""));
     assertTrue(reorderedSchemaJson.contains("\"comment\":\"Year partition\""));
+  }
+
+  @Test
+  public void testCommentsWithNewlineProduceValidJson() {
+    String avroSchemaJson = "{\n"
+        + "  \"type\": \"record\",\n"
+        + "  \"name\": \"TestRecord\",\n"
+        + "  \"fields\": [\n"
+        + "    {\"name\": \"event_type\", \"type\": \"string\", \"doc\": \"line1\\nline2\\twith tab\"}\n"
+        + "  ]\n"
+        + "}";
+
+    Schema avroSchema = new Schema.Parser().parse(avroSchemaJson);
+    String sparkSchemaJson = AvroToSparkJson.convertToSparkSchemaJson(avroSchema);
+
+    assertTrue(sparkSchemaJson.contains("\\n"));
+    assertTrue(sparkSchemaJson.contains("\\t"));
+    assertDoesNotThrow(() -> new ObjectMapper().readTree(sparkSchemaJson));
   }
 }
