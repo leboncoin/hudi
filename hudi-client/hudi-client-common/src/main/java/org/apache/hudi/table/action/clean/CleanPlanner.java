@@ -32,6 +32,7 @@ import org.apache.hudi.common.model.HoodieFileGroup;
 import org.apache.hudi.common.model.HoodieFileGroupId;
 import org.apache.hudi.common.model.HoodieLogFile;
 import org.apache.hudi.common.model.HoodieReplaceCommitMetadata;
+import org.apache.hudi.common.config.HoodieMetadataConfig;
 import org.apache.hudi.common.table.timeline.HoodieInstant;
 import org.apache.hudi.common.table.timeline.HoodieTimeline;
 import org.apache.hudi.common.table.timeline.TimelineMetadataUtils;
@@ -81,6 +82,7 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   public static final String SAVEPOINTED_TIMESTAMPS = "savepointed_timestamps";
 
   private final SyncableFileSystemView fileSystemView;
+  private transient SyncableFileSystemView fileSystemBackedView;
   private final HoodieTimeline commitTimeline;
   private final Map<HoodieFileGroupId, CompactionOperation> fgIdToPendingCompactionOperations;
   private final Map<HoodieFileGroupId, CompactionOperation> fgIdToPendingLogCompactionOperations;
@@ -88,6 +90,8 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   private final HoodieWriteConfig config;
   private transient HoodieEngineContext context;
   private List<String> savepointedTimestamps;
+  // Tracks whether current clean planning should avoid metadata-backed listing and scan files directly.
+  private boolean fileSystemBasedListingForCurrentPlan = false;
 
   public CleanPlanner(HoodieEngineContext context, HoodieTable<T, I, K, O> hoodieTable, HoodieWriteConfig config) {
     this.context = context;
@@ -116,6 +120,10 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    */
   List<String> getSavepointedTimestamps() {
     return this.savepointedTimestamps;
+  }
+
+  boolean isFileSystemBasedListingForCurrentPlan() {
+    return fileSystemBasedListingForCurrentPlan;
   }
 
   /**
@@ -153,6 +161,7 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    * @throws IOException when underlying file-system throws this exception
    */
   public List<String> getPartitionPathsToClean(Option<HoodieInstant> earliestRetainedInstant) throws IOException {
+    fileSystemBasedListingForCurrentPlan = false;
     switch (config.getCleanerPolicy()) {
       case KEEP_LATEST_COMMITS:
       case KEEP_LATEST_BY_HOURS:
@@ -279,8 +288,24 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    * @return all partitions paths for the dataset.
    */
   private List<String> getPartitionPathsForFullCleaning() {
+    fileSystemBasedListingForCurrentPlan = true;
     // Go to brute force mode of scanning all partitions
-    return FSUtils.getAllPartitionPaths(context, hoodieTable.getStorage(), config.getMetadataConfig(), config.getBasePath());
+    return FSUtils.getAllPartitionPaths(
+        context,
+        hoodieTable.getStorage(),
+        HoodieMetadataConfig.newBuilder().fromProperties(config.getMetadataConfig().getProps()).enable(false).build(),
+        config.getBasePath());
+  }
+
+  private SyncableFileSystemView getFileSystemViewForCurrentPlan() {
+    if (!fileSystemBasedListingForCurrentPlan) {
+      return fileSystemView;
+    }
+
+    if (fileSystemBackedView == null) {
+      fileSystemBackedView = new HoodieTableFileSystemView(hoodieTable.getMetaClient(), hoodieTable.getActiveTimeline());
+    }
+    return fileSystemBackedView;
   }
 
   /**
@@ -316,7 +341,7 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
     // In other words, the file versions only apply to the active file groups.
     deletePaths.addAll(getReplacedFilesEligibleToClean(savepointedFiles, partitionPath, Option.empty()));
     boolean toDeletePartition = false;
-    List<HoodieFileGroup> fileGroups = fileSystemView.getAllFileGroupsStateless(partitionPath).collect(Collectors.toList());
+    List<HoodieFileGroup> fileGroups = getFileSystemViewForCurrentPlan().getAllFileGroupsStateless(partitionPath).collect(Collectors.toList());
     for (HoodieFileGroup fileGroup : fileGroups) {
       int keepVersions = config.getCleanerFileVersionsRetained();
       // do not cleanup slice required for pending compaction
@@ -394,7 +419,7 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
       // all replaced file groups before earliestCommitToRetain are eligible to clean
       deletePaths.addAll(getReplacedFilesEligibleToClean(savepointedFiles, partitionPath, earliestCommitToRetain));
       // add active files
-      List<HoodieFileGroup> fileGroups = fileSystemView.getAllFileGroupsStateless(partitionPath).collect(Collectors.toList());
+      List<HoodieFileGroup> fileGroups = getFileSystemViewForCurrentPlan().getAllFileGroupsStateless(partitionPath).collect(Collectors.toList());
       for (HoodieFileGroup fileGroup : fileGroups) {
         List<FileSlice> fileSliceList = fileGroup.getAllFileSlices().collect(Collectors.toList());
 
@@ -494,9 +519,9 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   private List<CleanFileInfo> getReplacedFilesEligibleToClean(List<String> savepointedFiles, String partitionPath, Option<HoodieInstant> earliestCommitToRetain) {
     final Stream<HoodieFileGroup> replacedGroups;
     if (earliestCommitToRetain.isPresent()) {
-      replacedGroups = fileSystemView.getReplacedFileGroupsBefore(earliestCommitToRetain.get().getTimestamp(), partitionPath);
+      replacedGroups = getFileSystemViewForCurrentPlan().getReplacedFileGroupsBefore(earliestCommitToRetain.get().getTimestamp(), partitionPath);
     } else {
-      replacedGroups = fileSystemView.getAllReplacedFileGroups(partitionPath);
+      replacedGroups = getFileSystemViewForCurrentPlan().getAllReplacedFileGroups(partitionPath);
     }
     return replacedGroups.flatMap(HoodieFileGroup::getAllFileSlices)
         // do not delete savepointed files  (archival will make sure corresponding replacecommit file is not deleted)
@@ -632,6 +657,6 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   }
 
   private boolean noSubsequentReplaceCommit(String earliestCommitToRetain, String partitionPath) {
-    return !fileSystemView.getReplacedFileGroupsAfterOrOn(earliestCommitToRetain, partitionPath).findAny().isPresent();
+    return !getFileSystemViewForCurrentPlan().getReplacedFileGroupsAfterOrOn(earliestCommitToRetain, partitionPath).findAny().isPresent();
   }
 }
