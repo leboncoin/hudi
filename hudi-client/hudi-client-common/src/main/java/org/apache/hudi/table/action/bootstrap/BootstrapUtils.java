@@ -34,13 +34,18 @@ import org.apache.hadoop.fs.RemoteIterator;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class BootstrapUtils {
+  private static final Set<String> NON_HUDI_TOP_LEVEL_FOLDERS =
+      new HashSet<>(Arrays.asList("_delta_log", "metadata"));
 
   /**
    * Returns leaf folders with files under a path.
@@ -125,7 +130,8 @@ public class BootstrapUtils {
   }
 
   private static PathFilter getExcludeMetaPathFilter() {
-    // Avoid listing and including any folders under the meta folder
-    return (path) -> !path.toString().contains(HoodieTableMetaClient.METAFOLDER_NAME);
+    // Avoid listing and including meta/non-Hudi folders from table root.
+    return (path) -> !path.getName().equals(HoodieTableMetaClient.METAFOLDER_NAME)
+        && !NON_HUDI_TOP_LEVEL_FOLDERS.contains(path.getName());
   }
 }

@@ -156,8 +156,7 @@ public class HoodieROTablePathFilter implements Configurable, PathFilter, Serial
 
       // Skip all files that are descendants of .hoodie in its path.
       String filePath = path.toString();
-      if (filePath.contains("/" + HoodieTableMetaClient.METAFOLDER_NAME + "/")
-          || filePath.endsWith("/" + HoodieTableMetaClient.METAFOLDER_NAME)) {
+      if (containsPathSegment(filePath, HoodieTableMetaClient.METAFOLDER_NAME)) {
         if (LOG.isDebugEnabled()) {
           LOG.debug(String.format("Skipping Hoodie Metadata file  %s \n", filePath));
         }
@@ -176,6 +175,14 @@ public class HoodieROTablePathFilter implements Configurable, PathFilter, Serial
       }
 
       if (baseDir != null) {
+        if (isUnderTopLevelFolder(filePath, baseDir.toString(), "_delta_log")
+            || isUnderTopLevelFolder(filePath, baseDir.toString(), "metadata")) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug(String.format("Skipping non-Hudi metadata file  %s \n", filePath));
+          }
+          return false;
+        }
+
         // Check whether baseDir in nonHoodiePathCache
         if (nonHoodiePathCache.contains(baseDir.toString())) {
           if (LOG.isDebugEnabled()) {
@@ -262,5 +269,19 @@ public class HoodieROTablePathFilter implements Configurable, PathFilter, Serial
   @Override
   public Configuration getConf() {
     return conf.unwrapAs(Configuration.class);
+  }
+
+  private static boolean containsPathSegment(String path, String segment) {
+    return path.equals(segment)
+        || path.startsWith(segment + "/")
+        || path.startsWith("/" + segment)
+        || path.contains("/" + segment + "/")
+        || path.endsWith("/" + segment);
+  }
+
+  private static boolean isUnderTopLevelFolder(String filePath, String tableBasePath, String folderName) {
+    String normalizedBasePath = tableBasePath.endsWith("/") ? tableBasePath.substring(0, tableBasePath.length() - 1) : tableBasePath;
+    String topLevelFolderPath = normalizedBasePath + "/" + folderName;
+    return filePath.equals(topLevelFolderPath) || filePath.startsWith(topLevelFolderPath + "/");
   }
 }

@@ -81,6 +81,8 @@ public class FSUtils {
   public static final Pattern PREFIX_BY_FILE_ID_PATTERN = Pattern.compile("^(.+)-(\\d+)");
 
   private static final String LOG_FILE_EXTENSION = ".log";
+  private static final Set<String> NON_HUDI_TOP_LEVEL_FOLDERS =
+      new HashSet<>(Arrays.asList("_delta_log", "metadata"));
 
   private static final StoragePathFilter ALLOW_ALL_FILTER = file -> true;
 
@@ -326,7 +328,15 @@ public class FSUtils {
 
   private static StoragePathFilter getExcludeMetaPathFilter() {
     // Avoid listing and including any folders under the metafolder
-    return (path) -> !path.toString().contains(HoodieTableMetaClient.METAFOLDER_NAME);
+    return (path) -> !containsPathSegment(path.toString(), HoodieTableMetaClient.METAFOLDER_NAME);
+  }
+
+  private static boolean containsPathSegment(String path, String segment) {
+    return path.equals(segment)
+        || path.startsWith(segment + PATH_SEPARATOR)
+        || path.startsWith(PATH_SEPARATOR + segment)
+        || path.contains(PATH_SEPARATOR + segment + PATH_SEPARATOR)
+        || path.endsWith(PATH_SEPARATOR + segment);
   }
 
   /**
@@ -614,8 +624,7 @@ public class FSUtils {
       throws IOException {
     List<StoragePathInfo> statuses = storage.globEntries(globPath);
     return statuses.stream()
-        .filter(fileStatus -> !fileStatus.getPath().toString()
-            .contains(HoodieTableMetaClient.METAFOLDER_NAME))
+        .filter(fileStatus -> !containsPathSegment(fileStatus.getPath().toString(), HoodieTableMetaClient.METAFOLDER_NAME))
         .collect(Collectors.toList());
   }
 
@@ -719,11 +728,18 @@ public class FSUtils {
 
   public static List<StoragePathInfo> getAllDataPathInfo(HoodieStorage storage, StoragePath path)
       throws IOException {
+    return getAllDataPathInfo(storage, path, true);
+  }
+
+  private static List<StoragePathInfo> getAllDataPathInfo(HoodieStorage storage, StoragePath path, boolean isTopLevel)
+      throws IOException {
     List<StoragePathInfo> pathInfoList = new ArrayList<>();
     for (StoragePathInfo pathInfo : storage.listDirectEntries(path)) {
-      if (!pathInfo.getPath().toString().contains(HoodieTableMetaClient.METAFOLDER_NAME)) {
+      boolean isHudiMetaPath = containsPathSegment(pathInfo.getPath().toString(), HoodieTableMetaClient.METAFOLDER_NAME);
+      boolean isNonHudiTopLevelPath = isTopLevel && NON_HUDI_TOP_LEVEL_FOLDERS.contains(pathInfo.getPath().getName());
+      if (!isHudiMetaPath && !isNonHudiTopLevelPath) {
         if (pathInfo.isDirectory()) {
-          pathInfoList.addAll(getAllDataPathInfo(storage, pathInfo.getPath()));
+          pathInfoList.addAll(getAllDataPathInfo(storage, pathInfo.getPath(), false));
         } else {
           pathInfoList.add(pathInfo);
         }

@@ -1548,6 +1548,8 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
    * a very large number of files are present in the dataset being initialized.
    */
   static class DirectoryInfo implements Serializable {
+    private static final Set<String> NON_HUDI_TOP_LEVEL_FOLDERS =
+        new HashSet<>(Arrays.asList("_delta_log", "metadata"));
     // Relative path of the directory (relative to the base directory)
     private final String relativePath;
     // Map of filenames within this partition to their respective sizes
@@ -1565,6 +1567,11 @@ public abstract class HoodieBackedTableMetadataWriter<I> implements HoodieTableM
 
       for (StoragePathInfo pathInfo : pathInfos) {
         if (pathInfo.isDirectory()) {
+          // Skip non-Hudi top-level folders used by other lake formats.
+          if (!relativePath.contains(StoragePath.SEPARATOR)
+              && NON_HUDI_TOP_LEVEL_FOLDERS.contains(pathInfo.getPath().getName())) {
+            continue;
+          }
           // Ignore .hoodie directory as there cannot be any partitions inside it
           if (!pathInfo.getPath().getName().equals(HoodieTableMetaClient.METAFOLDER_NAME)) {
             this.subDirectories.add(pathInfo.getPath());
