@@ -46,10 +46,13 @@ import org.apache.hudi.storage.StoragePathInfo;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 
@@ -59,6 +62,8 @@ import java.util.stream.Collectors;
 public class FileSystemBackedTableMetadata extends AbstractHoodieTableMetadata {
 
   private static final int DEFAULT_LISTING_PARALLELISM = 1500;
+  private static final Set<String> NON_HUDI_TOP_LEVEL_FOLDERS =
+      new HashSet<>(Arrays.asList("_delta_log", "metadata"));
 
   private final boolean assumeDatePartitioning;
 
@@ -193,6 +198,9 @@ public class FileSystemBackedTableMetadata extends AbstractHoodieTableMetadata {
                 fileInfo -> {
                   StoragePath path = fileInfo.getPath();
                   if (fileInfo.isDirectory()) {
+                    if (isIgnorableTopLevelPath(path)) {
+                      return Pair.of(Option.empty(), Option.empty());
+                    }
                     if (HoodiePartitionMetadata.hasPartitionMetadata(getStorage(), path)) {
                       return Pair.of(
                           Option.of(FSUtils.getRelativePartitionPath(dataBasePath,
@@ -244,6 +252,12 @@ public class FileSystemBackedTableMetadata extends AbstractHoodieTableMetadata {
       }
     }
     return partitionPaths;
+  }
+
+  private boolean isIgnorableTopLevelPath(StoragePath path) {
+    String relativePartitionPath = FSUtils.getRelativePartitionPath(dataBasePath, path);
+    return !relativePartitionPath.contains(StoragePath.SEPARATOR)
+        && NON_HUDI_TOP_LEVEL_FOLDERS.contains(path.getName());
   }
 
   @Override
