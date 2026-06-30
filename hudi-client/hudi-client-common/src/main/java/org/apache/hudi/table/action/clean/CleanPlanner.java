@@ -81,7 +81,6 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   public static final Integer LATEST_CLEAN_PLAN_VERSION = CLEAN_PLAN_VERSION_2;
   public static final String SAVEPOINTED_TIMESTAMPS = "savepointed_timestamps";
 
-  private final SyncableFileSystemView fileSystemView;
   private transient SyncableFileSystemView fileSystemBackedView;
   private final HoodieTimeline commitTimeline;
   private final Map<HoodieFileGroupId, CompactionOperation> fgIdToPendingCompactionOperations;
@@ -90,13 +89,10 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   private final HoodieWriteConfig config;
   private transient HoodieEngineContext context;
   private List<String> savepointedTimestamps;
-  // Tracks whether current clean planning should avoid metadata-backed listing and scan files directly.
-  private boolean fileSystemBasedListingForCurrentPlan = false;
 
   public CleanPlanner(HoodieEngineContext context, HoodieTable<T, I, K, O> hoodieTable, HoodieWriteConfig config) {
     this.context = context;
     this.hoodieTable = hoodieTable;
-    this.fileSystemView = hoodieTable.getHoodieView();
     this.commitTimeline = hoodieTable.getCompletedCommitsTimeline();
     this.config = config;
     SyncableFileSystemView fileSystemView = (SyncableFileSystemView) hoodieTable.getSliceView();
@@ -120,10 +116,6 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    */
   List<String> getSavepointedTimestamps() {
     return this.savepointedTimestamps;
-  }
-
-  boolean isFileSystemBasedListingForCurrentPlan() {
-    return fileSystemBasedListingForCurrentPlan;
   }
 
   /**
@@ -161,7 +153,6 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    * @throws IOException when underlying file-system throws this exception
    */
   public List<String> getPartitionPathsToClean(Option<HoodieInstant> earliestRetainedInstant) throws IOException {
-    fileSystemBasedListingForCurrentPlan = false;
     switch (config.getCleanerPolicy()) {
       case KEEP_LATEST_COMMITS:
       case KEEP_LATEST_BY_HOURS:
@@ -288,7 +279,6 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
    * @return all partitions paths for the dataset.
    */
   private List<String> getPartitionPathsForFullCleaning() {
-    fileSystemBasedListingForCurrentPlan = true;
     // Go to brute force mode of scanning all partitions
     return FSUtils.getAllPartitionPaths(
         context,
@@ -298,10 +288,10 @@ public class CleanPlanner<T, I, K, O> implements Serializable {
   }
 
   private SyncableFileSystemView getFileSystemViewForCurrentPlan() {
-    if (!fileSystemBasedListingForCurrentPlan) {
-      return fileSystemView;
-    }
-
+    // Always list file slices from the file system instead of the metadata table.
+    // getAllFileGroupsStateless lists one partition at a time, so this stays scoped to
+    // the partitions the planner already selected (e.g. the incremental set touched by a
+    // pseudonymization rewrite) and avoids slow MDT point-lookups, without a full scan.
     if (fileSystemBackedView == null) {
       fileSystemBackedView = new HoodieTableFileSystemView(hoodieTable.getMetaClient(), hoodieTable.getActiveTimeline());
     }
