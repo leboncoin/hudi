@@ -176,6 +176,18 @@
             <version>${aws.sdk.version}</version>
         </dependency>
 
+        <!--
+          hudi-aws-bundle relocates software.amazon.awssdk. -> org.apache.hudi.software.amazon.awssdk.
+          WebIdentityCredentialsUtils resolves StsWebIdentityCredentialsProviderFactory by reflection under
+          that relocated name, so without the 'sts' module in the shaded artifact IRSA / web identity is
+          silently disabled and the Glue sync client ends up with no usable credentials provider.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
+            <version>${aws.sdk.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.apache.httpcomponents</groupId>
             <artifactId>httpclient</artifactId>
