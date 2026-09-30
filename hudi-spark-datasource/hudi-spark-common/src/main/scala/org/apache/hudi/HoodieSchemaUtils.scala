@@ -20,10 +20,11 @@
 package org.apache.hudi
 
 import org.apache.hudi.HoodieSparkSqlWriter.{CANONICALIZE_SCHEMA, SQL_MERGE_INTO_WRITES}
+import org.apache.hudi.avro.AvroSchemaUtils
 import org.apache.hudi.avro.AvroSchemaUtils.{checkSchemaCompatible, checkValidEvolution, isCompatibleProjectionOf, isSchemaCompatible}
 import org.apache.hudi.avro.HoodieAvroUtils
 import org.apache.hudi.avro.HoodieAvroUtils.removeMetadataFields
-import org.apache.hudi.common.config.{HoodieConfig, TypedProperties}
+import org.apache.hudi.common.config.{HoodieCommonConfig, HoodieConfig, TypedProperties}
 import org.apache.hudi.common.model.HoodieRecord
 import org.apache.hudi.common.table.{HoodieTableMetaClient, TableSchemaResolver}
 import org.apache.hudi.config.HoodieWriteConfig
@@ -77,6 +78,19 @@ object HoodieSchemaUtils {
                          latestTableSchemaOpt: Option[Schema],
                          internalSchemaOpt: Option[InternalSchema],
                          opts: Map[String, String]): Schema = {
+    val writerSchema = deduceWriterSchemaInternal(sourceSchema, latestTableSchemaOpt, internalSchemaOpt, opts)
+    // Spark's StructType has no table-level doc and schema evolution rebuilds records without one,
+    // so the table comment is re-applied here, the single point every writer path goes through.
+    opts.get(HoodieCommonConfig.TABLE_COMMENT.key)
+      .orElse(latestTableSchemaOpt.flatMap(s => Option(s.getDoc)))
+      .map(doc => AvroSchemaUtils.withDoc(writerSchema, doc))
+      .getOrElse(writerSchema)
+  }
+
+  private def deduceWriterSchemaInternal(sourceSchema: Schema,
+                                         latestTableSchemaOpt: Option[Schema],
+                                         internalSchemaOpt: Option[InternalSchema],
+                                         opts: Map[String, String]): Schema = {
     latestTableSchemaOpt match {
       // If table schema is empty, then we use the source schema as a writer's schema.
       case None => AvroInternalSchemaConverter.fixNullOrdering(sourceSchema)

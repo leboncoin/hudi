@@ -20,8 +20,10 @@ package org.apache.hudi.functional
 import org.apache.spark.sql._
 import org.apache.spark.sql.hudi.HoodieSparkSessionExtension
 import org.apache.spark.SparkContext
-import org.apache.hudi.testutils.HoodieClientTestUtils.getSparkConfForTest
+import org.apache.hudi.testutils.HoodieClientTestUtils.{createMetaClient, getSparkConfForTest}
 import org.apache.hudi.DataSourceWriteOptions
+import org.apache.hudi.common.config.HoodieCommonConfig
+import org.apache.hudi.common.table.TableSchemaResolver
 import org.apache.hudi.config.HoodieWriteConfig
 import org.apache.hudi.common.model.{HoodieTableType}
 import org.apache.spark.sql.types.StructType
@@ -79,5 +81,39 @@ class TestColumnComments {
     // now confirm the comment is present at read time
     assertEquals(1, spark.sql("desc extended test_tbl")
       .filter("col_name = '_row_key' and comment = 'dummy comment'").count)
+  }
+
+  @ParameterizedTest
+  @EnumSource(value = classOf[HoodieTableType], names = Array("COPY_ON_WRITE", "MERGE_ON_READ"))
+  def testTableCommentInCommitSchema(tableType: HoodieTableType): Unit = {
+    val basePath = java.nio.file.Files.createTempDirectory("hoodie_table_comment_path").toAbsolutePath.toString
+    val opts = Map(
+      HoodieWriteConfig.TBL_NAME.key -> "hoodie_table_doc",
+      DataSourceWriteOptions.TABLE_TYPE.key -> tableType.toString,
+      DataSourceWriteOptions.OPERATION.key -> "upsert",
+      DataSourceWriteOptions.RECORDKEY_FIELD.key -> "_row_key",
+      DataSourceWriteOptions.PRECOMBINE_FIELD.key -> "ts",
+      DataSourceWriteOptions.PARTITIONPATH_FIELD.key -> "partition"
+    )
+    def tableDoc(): String =
+      new TableSchemaResolver(createMetaClient(spark, basePath)).getTableAvroSchema(false).getDoc
+
+    spark.sql("select '0' as _row_key, '1' as content, '2' as partition, '3' as ts")
+      .write.format("hudi").options(opts)
+      .option(HoodieCommonConfig.TABLE_COMMENT.key, "first comment")
+      .mode(SaveMode.Overwrite).save(basePath)
+    assertEquals("first comment", tableDoc())
+
+    // without the option, the doc of the latest table schema is kept
+    spark.sql("select '1' as _row_key, '1' as content, '2' as partition, '3' as ts")
+      .write.format("hudi").options(opts).mode(SaveMode.Append).save(basePath)
+    assertEquals("first comment", tableDoc())
+
+    // schema evolution (new nullable column) with an updated description
+    spark.sql("select '2' as _row_key, '1' as content, '2' as partition, '3' as ts, if(true, 'x', null) as extra")
+      .write.format("hudi").options(opts)
+      .option(HoodieCommonConfig.TABLE_COMMENT.key, "second comment")
+      .mode(SaveMode.Append).save(basePath)
+    assertEquals("second comment", tableDoc())
   }
 }

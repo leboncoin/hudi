@@ -27,7 +27,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import java.util.Collections;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -253,5 +255,22 @@ public class TestAvroSchemaUtils {
   public void  testBrokenSchema() {
     assertThrows(SchemaBackwardsCompatibilityException.class,
         () -> AvroSchemaUtils.checkSchemaCompatible(FULL_SCHEMA, BROKEN_SCHEMA, true, false, Collections.emptySet()));
+  }
+
+  @Test
+  public void testWithDoc() {
+    Schema schema = new Schema.Parser().parse("{\"type\":\"record\",\"name\":\"rec\",\"namespace\":\"ns\","
+        + "\"custom\":\"prop\",\"fields\":[{\"name\":\"id\",\"type\":\"string\",\"doc\":\"the id\",\"fprop\":\"v\"}]}");
+
+    Schema documented = AvroSchemaUtils.withDoc(schema, "table description");
+
+    assertEquals("table description", documented.getDoc());
+    assertEquals("ns.rec", documented.getFullName());
+    assertEquals("prop", documented.getProp("custom"));
+    assertEquals("the id", documented.getField("id").doc());
+    assertEquals("v", documented.getField("id").getProp("fprop"));
+    assertSame(documented, AvroSchemaUtils.withDoc(documented, "table description"));
+    assertSame(Schema.create(Schema.Type.STRING).getType(),
+        AvroSchemaUtils.withDoc(Schema.create(Schema.Type.STRING), "doc").getType());
   }
 }

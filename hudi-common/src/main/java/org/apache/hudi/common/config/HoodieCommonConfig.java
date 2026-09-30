@@ -81,6 +81,15 @@ public class HoodieCommonConfig extends HoodieConfig {
           + " operation will fail schema compatibility check. Set this option to true will make the missing "
           + " column be filled with null values to successfully complete the write operation.");
 
+  public static final ConfigProperty<String> TABLE_COMMENT = ConfigProperty
+      .key("hoodie.write.table.comment")
+      .noDefaultValue()
+      .markAdvanced()
+      .sinceVersion("0.15.0")
+      .withDocumentation("Table comment stored as the record doc of the writer schema, so that it is persisted "
+          + "in the commit metadata and propagated to catalogs by meta sync. When unset, the doc of the latest "
+          + "table schema is kept.");
+
   public static final ConfigProperty<ExternalSpillableMap.DiskMapType> SPILLABLE_DISK_MAP_TYPE = ConfigProperty
       .key("hoodie.common.spillable.diskmap.type")
       .defaultValue(ExternalSpillableMap.DiskMapType.BITCASK)
