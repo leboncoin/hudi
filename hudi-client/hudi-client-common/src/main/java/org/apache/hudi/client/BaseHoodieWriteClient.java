@@ -18,6 +18,7 @@
 
 package org.apache.hudi.client;
 
+import org.apache.hudi.avro.AvroSchemaUtils;
 import org.apache.hudi.avro.HoodieAvroUtils;
 import org.apache.hudi.avro.model.HoodieCleanMetadata;
 import org.apache.hudi.avro.model.HoodieIndexCommitMetadata;
@@ -322,7 +323,9 @@ public abstract class BaseHoodieWriteClient<T, I, K, O> extends BaseHoodieClient
         schemasManager.persistHistorySchemaStr(instantTime, SerDeHelper.inheritSchemas(evolvedSchema, historySchemaStr));
       }
       // update SCHEMA_KEY
-      metadata.addMetadata(SCHEMA_KEY, AvroInternalSchemaConverter.convert(evolvedSchema, avroSchema.getFullName()).toString());
+      // InternalSchema has no record-level doc: restore the writer's one to keep the table comment.
+      Schema evolvedAvroSchema = AvroInternalSchemaConverter.convert(evolvedSchema, avroSchema.getFullName());
+      metadata.addMetadata(SCHEMA_KEY, AvroSchemaUtils.withDoc(evolvedAvroSchema, avroSchema.getDoc()).toString());
     }
   }
 

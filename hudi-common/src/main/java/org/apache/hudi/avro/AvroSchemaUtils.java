@@ -217,6 +217,27 @@ public class AvroSchemaUtils {
   }
 
   /**
+   * Returns a copy of the given record schema with its doc replaced by {@code doc}, or the schema
+   * itself when the doc is already equal.
+   */
+  public static Schema withDoc(Schema schema, String doc) {
+    if (schema.getType() != Schema.Type.RECORD || Objects.equals(schema.getDoc(), doc)) {
+      return schema;
+    }
+    List<Schema.Field> fields = schema.getFields().stream()
+        .map(field -> {
+          Schema.Field newField = new Schema.Field(field.name(), field.schema(), field.doc(), field.defaultVal());
+          field.getObjectProps().forEach(newField::addProp);
+          return newField;
+        })
+        .collect(Collectors.toList());
+    Schema newSchema = Schema.createRecord(schema.getName(), doc, schema.getNamespace(), schema.isError());
+    newSchema.setFields(fields);
+    schema.getObjectProps().forEach(newSchema::addProp);
+    return newSchema;
+  }
+
+  /**
    * Passed in {@code Union} schema and will try to resolve the field with the {@code fieldSchemaFullName}
    * w/in the union returning its corresponding schema
    *

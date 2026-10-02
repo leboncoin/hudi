@@ -25,6 +25,7 @@ import org.apache.hudi.common.util.CollectionUtils;
 import org.apache.hudi.common.util.CustomizedThreadFactory;
 import org.apache.hudi.common.util.HoodieTimer;
 import org.apache.hudi.common.util.Option;
+import org.apache.hudi.common.util.StringUtils;
 import org.apache.hudi.config.GlueCatalogSyncClientConfig;
 import org.apache.hudi.hive.HiveSyncConfig;
 import org.apache.hudi.hive.SchemaDifference;
@@ -121,6 +122,7 @@ import static org.apache.hudi.sync.common.util.TableUtils.tableId;
 public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
   private static final int GLUE_COLUMN_COMMENT_MAX_LEN = 255;
   private static final int GLUE_TABLE_DESC_MAX_LEN = 2048;
+  private static final String TABLE_COMMENT_PARAMETER = "comment";
   private static final Pattern GLUE_ALLOWED_CHARS_PATTERN =
       Pattern.compile("^[\\u0020-\\uD7FF\\uE000-\\uFFFD\\x{10000}-\\x{10FFFF}\\t]*$");
 
@@ -454,7 +456,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
     return sanitized.toString();
   }
 
-  private String truncate(String value, int maxLen, String what) {
+  private static String truncate(String value, int maxLen, String what) {
     if (value == null) {
       return null;
     }
@@ -486,6 +488,28 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
     }
   }
 
+  /**
+   * Returns the table parameters with the "comment" one set from the given table comment: Hive/Spark
+   * read the table comment from it, not from the Glue Description.
+   */
+  private static Map<String, String> withTableComment(Map<String, String> parameters, String tableComment) {
+    Map<String, String> newParameters = new HashMap<>(parameters);
+    if (!StringUtils.isNullOrEmpty(tableComment)) {
+      newParameters.put(TABLE_COMMENT_PARAMETER, tableComment);
+    }
+    return newParameters;
+  }
+
+  /**
+   * Glue Description mirroring the table comment for the console and Description readers, kept as is
+   * when there is no comment so that a description set by hand is not wiped.
+   */
+  static String tableDescription(String tableComment, String currentDescription) {
+    return StringUtils.isNullOrEmpty(tableComment)
+        ? currentDescription
+        : truncate(tableComment, GLUE_TABLE_DESC_MAX_LEN, "table description");
+  }
+
   @Override
   public List<FieldSchema> getStorageFieldSchemas() {
     try {
@@ -511,19 +535,23 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
     List<Column> partitionKeys = setComments(table.partitionKeys(), commentsMap);
 
-    String tableDescription = truncate(sanitizeForGlue(getTableDoc()), GLUE_TABLE_DESC_MAX_LEN, "table description");
+    String tableComment = sanitizeForGlue(getTableDoc());
+    Map<String, String> parameters = withTableComment(table.parameters(), tableComment);
+    String description = tableDescription(tableComment, table.description());
 
     if (getTable(awsGlue, databaseName, tableName).storageDescriptor().equals(storageDescriptor)
-        && getTable(awsGlue, databaseName, tableName).partitionKeys().equals(partitionKeys)) {
-      // no comments have been modified / added
+        && getTable(awsGlue, databaseName, tableName).partitionKeys().equals(partitionKeys)
+        && table.parameters().equals(parameters)
+        && Objects.equals(table.description(), description)) {
+      // no column nor table comments have been modified / added
       return false;
     } else {
       final Instant now = Instant.now();
       TableInput updatedTableInput = TableInput.builder()
           .name(tableName)
-          .description(tableDescription)
+          .description(description)
           .tableType(table.tableType())
-          .parameters(table.parameters())
+          .parameters(parameters)
           .partitionKeys(partitionKeys)
           .storageDescriptor(storageDescriptor)
           .lastAccessTime(now)
@@ -554,11 +582,13 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
       List<Column> newColumns = getColumnsFromSchema(newSchemaMap);
       StorageDescriptor sd = table.storageDescriptor();
       StorageDescriptor partitionSD = sd.copy(copySd -> copySd.columns(newColumns));
+      String tableComment = sanitizeForGlue(getTableDoc());
       final Instant now = Instant.now();
       TableInput updatedTableInput = TableInput.builder()
           .name(tableName)
+          .description(tableDescription(tableComment, table.description()))
           .tableType(table.tableType())
-          .parameters(table.parameters())
+          .parameters(withTableComment(table.parameters(), tableComment))
           .partitionKeys(table.partitionKeys())
           .storageDescriptor(partitionSD)
           .lastAccessTime(now)
@@ -635,10 +665,12 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
           .build();
 
       final Instant now = Instant.now();
+      String tableComment = sanitizeForGlue(getTableDoc());
       TableInput tableInput = TableInput.builder()
           .name(tableName)
+          .description(tableDescription(tableComment, null))
           .tableType(TableType.EXTERNAL_TABLE.toString())
-          .parameters(params)
+          .parameters(withTableComment(params, tableComment))
           .partitionKeys(schemaPartitionKeys)
           .storageDescriptor(storageDescriptor)
           .lastAccessTime(now)

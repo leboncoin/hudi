@@ -20,6 +20,8 @@ package org.apache.hudi.aws.sync;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Collections;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -46,5 +48,17 @@ public class TestAWSGlueCatalogSyncClient {
     assertFalse(AWSGlueCatalogSyncClient.isValidGlueString("line1\nline2"));
     assertTrue(AWSGlueCatalogSyncClient.isValidGlueString("emoji \uD83D\uDE00"));
     assertFalse(AWSGlueCatalogSyncClient.isValidGlueString("bad\uD800"));
+  }
+
+  @Test
+  public void testTableDescription() {
+    assertEquals("doc", AWSGlueCatalogSyncClient.tableDescription("doc", "old"));
+    assertEquals("manual", AWSGlueCatalogSyncClient.tableDescription(null, "manual"));
+    assertEquals("manual", AWSGlueCatalogSyncClient.tableDescription("", "manual"));
+    assertNull(AWSGlueCatalogSyncClient.tableDescription(null, null));
+
+    String truncated = AWSGlueCatalogSyncClient.tableDescription(String.join("", Collections.nCopies(3000, "a")), null);
+    assertEquals(2048, truncated.length());
+    assertTrue(truncated.endsWith(" [truncated]"));
   }
 }
