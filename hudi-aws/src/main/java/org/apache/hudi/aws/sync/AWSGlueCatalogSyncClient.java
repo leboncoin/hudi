@@ -1006,6 +1006,7 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
       final Instant now = Instant.now();
       TableInput updatedTableInput = TableInput.builder()
           .name(tableName)
+          .description(table.description())
           .tableType(table.tableType())
           .parameters(newParams)
           .partitionKeys(table.partitionKeys())
