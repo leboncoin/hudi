@@ -21,6 +21,8 @@ package org.apache.hudi.aws.sync;
 import org.apache.hudi.aws.sync.util.GluePartitionFilterGenerator;
 import org.apache.hudi.common.fs.FSUtils;
 import org.apache.hudi.common.table.TableSchemaResolver;
+import org.apache.hudi.common.table.timeline.HoodieInstant;
+import org.apache.hudi.common.table.timeline.HoodieTimeline;
 import org.apache.hudi.common.util.CollectionUtils;
 import org.apache.hudi.common.util.CustomizedThreadFactory;
 import org.apache.hudi.common.util.HoodieTimer;
@@ -95,6 +97,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.apache.hudi.aws.utils.S3Utils.s3aToS3;
+import static org.apache.hudi.common.table.timeline.HoodieTimeline.LESSER_THAN;
+import static org.apache.hudi.common.table.timeline.HoodieTimeline.compareTimestamps;
 import static org.apache.hudi.common.util.MapUtils.containsAll;
 import static org.apache.hudi.common.util.MapUtils.isNullOrEmpty;
 import static org.apache.hudi.config.GlueCatalogSyncClientConfig.ALL_PARTITIONS_READ_PARALLELISM;
@@ -904,6 +908,59 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
     }
   }
 
+  /**
+   * Completion time of the last synced commit. The sync uses it to also pick up commits that started
+   * before the last synced one but finished after it, which happens when several writers commit to the
+   * same table at the same time. Without it, their partitions are never added to Glue.
+   */
+  @Override
+  public Option<String> getLastCommitCompletionTimeSynced(String tableName) {
+    try {
+      Table table = getTable(awsGlue, databaseName, tableName);
+      return validCompletionTimeSynced(table.parameters());
+    } catch (Exception e) {
+      throw new HoodieGlueSyncException("Fail to get last sync commit completion time for " + tableId(databaseName, tableName), e);
+    }
+  }
+
+  /**
+   * The stored completion time, unless it is stale.
+   *
+   * <p>Differs from upstream (HUDI-7494): a completion time is never older than last_commit_time_sync,
+   * because a commit finishes after it starts. An older one was left by a sync that did not keep it up
+   * to date. Using it would make the next sync re-read every commit of the active timeline, on every
+   * table at once, and hit Glue throttling. Ignoring it keeps that sync incremental, and the sync then
+   * writes a fresh value.
+   */
+  static Option<String> validCompletionTimeSynced(Map<String, String> params) {
+    String completionTime = params.get(HOODIE_LAST_COMMIT_COMPLETION_TIME_SYNC);
+    if (completionTime == null) {
+      return Option.empty();
+    }
+    String lastCommitTime = params.get(HOODIE_LAST_COMMIT_TIME_SYNC);
+    if (lastCommitTime != null && compareTimestamps(completionTime, LESSER_THAN, lastCommitTime)) {
+      LOG.warn("Ignoring stale " + HOODIE_LAST_COMMIT_COMPLETION_TIME_SYNC + " " + completionTime
+          + ", older than " + HOODIE_LAST_COMMIT_TIME_SYNC + " " + lastCommitTime);
+      return Option.empty();
+    }
+    return Option.of(completionTime);
+  }
+
+  /**
+   * The sync markers to store for a timeline of completed commits: the last commit time, and the latest
+   * completion time when the timeline knows it.
+   */
+  static Map<String, String> syncedCommitParams(HoodieTimeline timeline) {
+    Map<String, String> params = new HashMap<>();
+    timeline.lastInstant().ifPresent(instant -> params.put(HOODIE_LAST_COMMIT_TIME_SYNC, instant.getTimestamp()));
+    timeline.getInstantsOrderedByStateTransitionTime()
+        .map(HoodieInstant::getStateTransitionTime)
+        .filter(Objects::nonNull)
+        .reduce((earlier, later) -> later)
+        .ifPresent(completionTime -> params.put(HOODIE_LAST_COMMIT_COMPLETION_TIME_SYNC, completionTime));
+    return params;
+  }
+
   @Override
   public void close() {
     awsGlue.close();
@@ -911,13 +968,13 @@ public class AWSGlueCatalogSyncClient extends HoodieSyncClient {
 
   @Override
   public void updateLastCommitTimeSynced(String tableName) {
-    if (!getActiveTimeline().lastInstant().isPresent()) {
+    HoodieTimeline activeTimeline = getActiveTimeline();
+    if (!activeTimeline.lastInstant().isPresent()) {
       LOG.warn("No commit in active timeline.");
       return;
     }
-    final String lastCommitTimestamp = getActiveTimeline().lastInstant().get().getTimestamp();
     try {
-      updateTableParameters(awsGlue, databaseName, tableName, Collections.singletonMap(HOODIE_LAST_COMMIT_TIME_SYNC, lastCommitTimestamp), skipTableArchive);
+      updateTableParameters(awsGlue, databaseName, tableName, syncedCommitParams(activeTimeline), skipTableArchive);
     } catch (Exception e) {
       throw new HoodieGlueSyncException("Fail to update last sync commit time for " + tableId(databaseName, tableName), e);
     }
